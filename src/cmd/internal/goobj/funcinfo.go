@@ -31,14 +31,48 @@ type FuncInfo struct {
 	Funcdataoff []uint32
 	File        []CUFileIndex
 
-	InlTree []InlTreeNode
+	InlTree    []InlTreeNode
+	WasmImport *WasmImport
 }
+
+type WasmImport struct {
+	Module  string
+	Name    string
+	Params  []WasmField
+	Results []WasmField
+}
+
+type WasmField struct {
+	Type   WasmFieldType
+	Offset int64
+}
+
+type WasmFieldType byte
+
+const (
+	WasmI32 WasmFieldType = iota
+	WasmI64
+	WasmF32
+	WasmF64
+	WasmPtr
+)
 
 func (a *FuncInfo) Write(w *bytes.Buffer) {
 	var b [4]byte
 	writeUint32 := func(x uint32) {
 		binary.LittleEndian.PutUint32(b[:], x)
 		w.Write(b[:])
+	}
+	writeInt64 := func(x int64) {
+		// At most 10 bytes are needed for 64-bit values
+		// (see encoding/binary pkg)
+		var b2 [10]byte
+		bytesWritten := binary.PutVarint(b2[:], x)
+		w.Write(b2[:bytesWritten])
+	}
+	writeString := func(s string) {
+		writeUint32(uint32(len(s)))
+		w.WriteString(s)
 	}
 	writeSymRef := func(s SymRef) {
 		writeUint32(s.PkgIdx)
@@ -69,6 +103,24 @@ func (a *FuncInfo) Write(w *bytes.Buffer) {
 	writeUint32(uint32(len(a.InlTree)))
 	for i := range a.InlTree {
 		a.InlTree[i].Write(w)
+	}
+	wi := a.WasmImport
+	if wi != nil {
+		w.Write([]byte{1})
+		writeString(wi.Module)
+		writeString(wi.Name)
+		writeUint32(uint32(len(wi.Params)))
+		for _, f := range wi.Params {
+			w.WriteByte(byte(f.Type))
+			writeInt64(f.Offset)
+		}
+		writeUint32(uint32(len(wi.Results)))
+		for _, f := range wi.Results {
+			w.WriteByte(byte(f.Type))
+			writeInt64(f.Offset)
+		}
+	} else {
+		w.Write([]byte{0})
 	}
 }
 
@@ -126,6 +178,8 @@ type FuncInfoLengths struct {
 	FileOff        uint32
 	NumInlTree     uint32
 	InlTreeOff     uint32
+	IsWasmImport   bool
+	WasmImportOff  uint32
 	Initialized    bool
 }
 
@@ -149,6 +203,11 @@ func (*FuncInfo) ReadFuncInfoLengths(b []byte) FuncInfoLengths {
 	numinltreeOff := result.FileOff + 4*result.NumFile
 	result.NumInlTree = binary.LittleEndian.Uint32(b[numinltreeOff:])
 	result.InlTreeOff = numinltreeOff + 4
+
+	const InlTreeNodeSize = 4 * 6
+	isWasmImportOff := result.InlTreeOff + InlTreeNodeSize*result.NumInlTree
+	result.IsWasmImport = b[isWasmImportOff] == 1
+	result.WasmImportOff = isWasmImportOff + 1
 
 	result.Initialized = true
 
@@ -236,4 +295,45 @@ func (inl *InlTreeNode) Read(b []byte) []byte {
 	inl.Func = SymRef{readUint32(), readUint32()}
 	inl.ParentPC = int32(readUint32())
 	return b
+}
+
+func (*FuncInfo) ReadWasmImport(b []byte) WasmImport {
+	readUint32 := func() uint32 {
+		x := binary.LittleEndian.Uint32(b)
+		b = b[4:]
+		return x
+	}
+	readInt64 := func() int64 {
+		val, bytesRead := binary.Varint(b)
+		if bytesRead <= 0 {
+			panic("could not read int64")
+		}
+		b = b[bytesRead:]
+		return val
+	}
+	readByte := func() byte {
+		byte_ := b[0]
+		b = b[1:]
+		return byte_
+	}
+	readString := func() string {
+		len_ := readUint32()
+		buf := b[:len_]
+		b = b[len_:]
+		return string(buf)
+	}
+	wi := WasmImport{}
+	wi.Module = readString()
+	wi.Name = readString()
+	wi.Params = make([]WasmField, readUint32())
+	for i := range wi.Params {
+		wi.Params[i].Type = WasmFieldType(readByte())
+		wi.Params[i].Offset = readInt64()
+	}
+	wi.Results = make([]WasmField, readUint32())
+	for i := range wi.Results {
+		wi.Results[i].Type = WasmFieldType(readByte())
+		wi.Results[i].Offset = readInt64()
+	}
+	return wi
 }

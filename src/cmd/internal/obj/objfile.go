@@ -653,6 +653,7 @@ func genFuncInfoSyms(ctxt *Link) {
 			}
 		}
 
+		o.WasmImport = s.Func.WasmImport
 		o.Write(&b)
 		isym := &LSym{
 			Type:   objabi.SDATA, // for now, I don't think it matters

@@ -1991,6 +1991,17 @@ func (fi *FuncInfo) InlTree(k int) InlTreeNode {
 	}
 }
 
+func (fi *FuncInfo) WasmImport() *goobj.WasmImport {
+	if !fi.lengths.Initialized {
+		panic("need to call Preload first")
+	}
+	if fi.lengths.IsWasmImport {
+		wi := (*goobj.FuncInfo)(nil).ReadWasmImport(fi.data[fi.lengths.WasmImportOff:])
+		return &wi
+	}
+	return nil
+}
+
 func (l *Loader) FuncInfo(i Sym) FuncInfo {
 	var r *oReader
 	var auxs []goobj.Aux

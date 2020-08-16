@@ -8,6 +8,7 @@ import (
 	"cmd/compile/internal/ssa"
 	"cmd/compile/internal/types"
 	"cmd/internal/dwarf"
+	"cmd/internal/goobj"
 	"cmd/internal/obj"
 	"cmd/internal/objabi"
 	"cmd/internal/src"
@@ -207,7 +208,17 @@ func funccompile(fn *Node) {
 	// assign parameter offsets
 	dowidth(fn.Type)
 
-	if fn.Nbody.Len() == 0 {
+	wi := fn.Func.wasmimport
+	hasWasmImport := wi != nil && objabi.GOARCH == "wasm"
+
+	if hasWasmImport && wi.module != "go" {
+		fn.Func.wasmfields = &wasmfields{
+			Params:  toWasmFields(fn.Type.Params().FieldSlice()),
+			Results: toWasmFields(fn.Type.Results().FieldSlice()),
+		}
+	}
+
+	if fn.Nbody.Len() == 0 && !hasWasmImport {
 		// Initialize ABI wrappers if necessary.
 		fn.Func.initLSym(false)
 		emitptrargsmap(fn)
@@ -794,3 +805,25 @@ type symByName []*types.Sym
 func (a symByName) Len() int           { return len(a) }
 func (a symByName) Less(i, j int) bool { return a[i].Name < a[j].Name }
 func (a symByName) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func toWasmFields(fields []*types.Field) []goobj.WasmField {
+	wfs := make([]goobj.WasmField, len(fields))
+	for i, f := range fields {
+		t := f.Type
+		switch {
+		case t.IsInteger() && t.Width == 4:
+			wfs[i].Type = goobj.WasmI32
+		case t.IsInteger() && t.Width == 8:
+			wfs[i].Type = goobj.WasmI64
+		case t.IsFloat() && t.Width == 4:
+			wfs[i].Type = goobj.WasmF32
+		case t.IsFloat() && t.Width == 8:
+			wfs[i].Type = goobj.WasmF64
+		case t.IsPtr():
+			wfs[i].Type = goobj.WasmPtr
+		default:
+			Fatalf("wasm import has bad function signature")
+		}
+		wfs[i].Offset = f.Offset
+	}
+	return wfs
+}

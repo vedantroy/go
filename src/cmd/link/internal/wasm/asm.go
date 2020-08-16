@@ -6,6 +6,7 @@ package wasm
 
 import (
 	"bytes"
+	"cmd/internal/goobj"
 	"cmd/internal/objabi"
 	"cmd/link/internal/ld"
 	"cmd/link/internal/loader"
@@ -43,9 +44,10 @@ func gentext(ctxt *ld.Link, ldr *loader.Loader) {
 }
 
 type wasmFunc struct {
-	Name string
-	Type uint32
-	Code []byte
+	Module string
+	Name   string
+	Type   uint32
+	Code   []byte
 }
 
 type wasmFuncType struct {
@@ -129,22 +131,23 @@ func asmb2(ctxt *ld.Link, ldr *loader.Loader) {
 	}
 
 	// collect host imports (functions that get imported from the WebAssembly host, usually JavaScript)
-	hostImports := []*wasmFunc{
-		{
-			Name: "debug",
-			Type: lookupType(&wasmFuncType{Params: []byte{I32}}, &types),
-		},
-	}
 	hostImportMap := make(map[loader.Sym]int64)
+	var hostImports []*wasmFunc
+
 	for _, fn := range ctxt.Textp {
-		relocs := ldr.Relocs(fn)
-		for ri := 0; ri < relocs.Count(); ri++ {
-			r := relocs.At(ri)
-			if r.Type() == objabi.R_WASMIMPORT {
-				hostImportMap[r.Sym()] = int64(len(hostImports))
+		fi := ldr.FuncInfo(fn)
+		if fi.Valid() {
+			fi.Preload()
+			wi := fi.WasmImport()
+			if wi != nil {
+				hostImportMap[fn] = int64(len(hostImports))
 				hostImports = append(hostImports, &wasmFunc{
-					Name: ldr.SymName(r.Sym()),
-					Type: lookupType(&wasmFuncType{Params: []byte{I32}}, &types),
+					Module: wi.Module,
+					Name:   wi.Name,
+					Type: lookupType(&wasmFuncType{
+						Params:  fieldsToTypes(wi.Params),
+						Results: fieldsToTypes(wi.Results),
+					}, &types),
 				})
 			}
 		}
@@ -278,7 +281,7 @@ func writeImportSec(ctxt *ld.Link, hostImports []*wasmFunc) {
 
 	writeUleb128(ctxt.Out, uint64(len(hostImports))) // number of imports
 	for _, fn := range hostImports {
-		writeName(ctxt.Out, "go") // provided by the import object in wasm_exec.js
+		writeName(ctxt.Out, fn.Module)
 		writeName(ctxt.Out, fn.Name)
 		ctxt.Out.WriteByte(0x00) // func import
 		writeUleb128(ctxt.Out, uint64(fn.Type))
@@ -599,4 +602,21 @@ func writeSleb128(w io.ByteWriter, v int64) {
 		}
 		w.WriteByte(c)
 	}
+}
+
+func fieldsToTypes(fields []goobj.WasmField) []byte {
+	b := make([]byte, len(fields))
+	for i, f := range fields {
+		switch f.Type {
+		case goobj.WasmI32, goobj.WasmPtr:
+			b[i] = I32
+		case goobj.WasmI64:
+			b[i] = I64
+		case goobj.WasmF32:
+			b[i] = F32
+		case goobj.WasmF64:
+			b[i] = F64
+		}
+	}
+	return b
 }

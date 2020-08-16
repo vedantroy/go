@@ -33,6 +33,7 @@ package gc
 import (
 	"cmd/compile/internal/ssa"
 	"cmd/compile/internal/types"
+	"cmd/internal/goobj"
 	"cmd/internal/obj"
 	"cmd/internal/objabi"
 	"cmd/internal/src"
@@ -271,6 +272,27 @@ func (f *Func) initLSym(hasBody bool) {
 			asym.SetABI(aliasABI)
 			asym.Set(obj.AttrDuplicateOK, true)
 			Ctxt.ABIAliases = append(Ctxt.ABIAliases, asym)
+		}
+	}
+
+	wi := f.wasmimport
+	if wi != nil && objabi.GOARCH == "wasm" {
+		if f.lsym.Func == nil {
+			f.lsym.Func = &obj.FuncInfo{}
+		}
+		if wi.module == "go" {
+			f.lsym.Func.WasmImport = &goobj.WasmImport{
+				Module: wi.module,
+				Name:   wi.name,
+				Params: []goobj.WasmField{{Type: goobj.WasmI32}},
+			}
+		} else {
+			f.lsym.Func.WasmImport = &goobj.WasmImport{
+				Module:  wi.module,
+				Name:    wi.name,
+				Params:  f.wasmfields.Params,
+				Results: f.wasmfields.Results,
+			}
 		}
 	}
 

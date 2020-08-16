@@ -6,6 +6,7 @@ package wasm
 
 import (
 	"bytes"
+	"cmd/internal/goobj"
 	"cmd/internal/obj"
 	"cmd/internal/objabi"
 	"cmd/internal/sys"
@@ -100,7 +101,6 @@ var unaryDst = map[obj.As]bool{
 	ATee:          true,
 	ACall:         true,
 	ACallIndirect: true,
-	ACallImport:   true,
 	ABr:           true,
 	ABrIf:         true,
 	ABrTable:      true,
@@ -188,6 +188,74 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 	}
 	s.Func.Args = s.Func.Text.To.Val.(int32)
 	s.Func.Locals = int32(framesize)
+
+	wi := s.Func.WasmImport
+	if wi != nil {
+		/*
+					   Functions generated from //go:wasmimport have garbage in their bodies
+			           for some reason. Discard the garbage, expect for the first instruction (TEXT).
+		*/
+		p := s.Func.Text
+		p.Link = nil
+		to := obj.Addr{
+			Type: obj.TYPE_MEM,
+			Name: obj.NAME_EXTERN,
+			Sym:  s,
+		}
+		if wi.Module == "go" {
+			p = appendp(p, AGet, regAddr(REG_SP))
+			p = appendp(p, ACall, to)
+			p.Mark = WasmImport
+		} else {
+			if len(wi.Results) > 1 {
+				panic("invalid results type") // impossible until multi-value proposal has landed
+			}
+			if len(wi.Results) == 1 {
+				p = appendp(p, AGet, regAddr(REG_SP)) // address has to be before the value
+			}
+			for _, f := range wi.Params {
+				p = appendp(p, AGet, regAddr(REG_SP))
+				f.Offset += 8
+				switch f.Type {
+				case goobj.WasmI32:
+					p = appendp(p, AI32Load, constAddr(f.Offset))
+				case goobj.WasmI64:
+					p = appendp(p, AI64Load, constAddr(f.Offset))
+				case goobj.WasmF32:
+					p = appendp(p, AF32Load, constAddr(f.Offset))
+				case goobj.WasmF64:
+					p = appendp(p, AF64Load, constAddr(f.Offset))
+				case goobj.WasmPtr:
+					p = appendp(p, AI64Load, constAddr(f.Offset))
+					p = appendp(p, AI32WrapI64)
+				default:
+					panic("bad param type")
+				}
+			}
+			p = appendp(p, ACall, to)
+			p.Mark = WasmImport
+			if len(wi.Results) == 1 {
+				f := wi.Results[0]
+				f.Offset += 8
+				switch f.Type {
+				case goobj.WasmI32:
+					p = appendp(p, AI32Store, constAddr(f.Offset))
+				case goobj.WasmI64:
+					p = appendp(p, AI64Store, constAddr(f.Offset))
+				case goobj.WasmF32:
+					p = appendp(p, AF32Store, constAddr(f.Offset))
+				case goobj.WasmF64:
+					p = appendp(p, AF64Store, constAddr(f.Offset))
+				case goobj.WasmPtr:
+					p = appendp(p, AI64ExtendI32U)
+					p = appendp(p, AI64Store, constAddr(f.Offset))
+				default:
+					panic("bad result type")
+				}
+			}
+		}
+		p = appendp(p, obj.ARET)
+	}
 
 	if s.Func.Text.From.Sym.Wrapper() {
 		// if g._panic != nil && g._panic.argp == FP {
@@ -421,7 +489,6 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 		case obj.ACALL, ACALLNORESUME:
 			call := *p
 			p.As = obj.ANOP
-
 			pcAfterCall := call.Link.Pc
 			if call.To.Sym == sigpanic {
 				pcAfterCall-- // sigpanic expects to be called without advancing the pc
@@ -702,12 +769,6 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 			default:
 				panic("bad MOV type")
 			}
-
-		case ACallImport:
-			p.As = obj.ANOP
-			p = appendp(p, AGet, regAddr(REG_SP))
-			p = appendp(p, ACall, obj.Addr{Type: obj.TYPE_MEM, Name: obj.NAME_EXTERN, Sym: s})
-			p.Mark = WasmImport
 		}
 	}
 

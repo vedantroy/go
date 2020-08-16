@@ -419,6 +419,7 @@ type FuncInfo struct {
 	OpenCodedDeferInfo *LSym
 
 	FuncInfoSym *LSym
+	WasmImport  *goobj.WasmImport
 }
 
 type InlMark struct {
