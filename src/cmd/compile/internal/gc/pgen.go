@@ -8,7 +8,6 @@ import (
 	"cmd/compile/internal/ssa"
 	"cmd/compile/internal/types"
 	"cmd/internal/dwarf"
-	"cmd/internal/goobj"
 	"cmd/internal/obj"
 	"cmd/internal/objabi"
 	"cmd/internal/src"
@@ -805,21 +804,21 @@ type symByName []*types.Sym
 func (a symByName) Len() int           { return len(a) }
 func (a symByName) Less(i, j int) bool { return a[i].Name < a[j].Name }
 func (a symByName) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func toWasmFields(fields []*types.Field) []goobj.WasmField {
-	wfs := make([]goobj.WasmField, len(fields))
+func toWasmFields(fields []*types.Field) []obj.WasmField {
+	wfs := make([]obj.WasmField, len(fields))
 	for i, f := range fields {
 		t := f.Type
 		switch {
 		case t.IsInteger() && t.Width == 4:
-			wfs[i].Type = goobj.WasmI32
+			wfs[i].Type = obj.WasmI32
 		case t.IsInteger() && t.Width == 8:
-			wfs[i].Type = goobj.WasmI64
+			wfs[i].Type = obj.WasmI64
 		case t.IsFloat() && t.Width == 4:
-			wfs[i].Type = goobj.WasmF32
+			wfs[i].Type = obj.WasmF32
 		case t.IsFloat() && t.Width == 8:
-			wfs[i].Type = goobj.WasmF64
+			wfs[i].Type = obj.WasmF64
 		case t.IsPtr():
-			wfs[i].Type = goobj.WasmPtr
+			wfs[i].Type = obj.WasmPtr
 		default:
 			Fatalf("wasm import has bad function signature")
 		}

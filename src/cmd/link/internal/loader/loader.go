@@ -1610,6 +1610,22 @@ func (l *Loader) Aux(i Sym, j int) Aux {
 	return Aux{r.Aux(li, j), r, l}
 }
 
+func (l *Loader) GetFuncWasmImportSym(fnSymIdx Sym) Sym {
+	if l.SymType(fnSymIdx) != sym.STEXT {
+		log.Fatalf("error: non-function sym %d/%s t=%s passed to GetFuncWasmImportSym", fnSymIdx, l.SymName(fnSymIdx), l.SymType(fnSymIdx).String())
+	}
+	r, li := l.toLocal(fnSymIdx)
+	auxs := r.Auxs(li)
+	for i := range auxs {
+		a := &auxs[i]
+		switch a.Type() {
+		case goobj.AuxWasmImport:
+			return l.resolve(r, a.Sym())
+		}
+	}
+	panic("GetFuncWasmImportSym called for func without aux Wasm import sym")
+}
+
 // GetFuncDwarfAuxSyms collects and returns the auxiliary DWARF
 // symbols associated with a given function symbol.  Prior to the
 // introduction of the loader, this was done purely using name
@@ -1989,17 +2005,6 @@ func (fi *FuncInfo) InlTree(k int) InlTreeNode {
 		Func:     fi.l.resolve(fi.r, node.Func),
 		ParentPC: node.ParentPC,
 	}
-}
-
-func (fi *FuncInfo) WasmImport() *goobj.WasmImport {
-	if !fi.lengths.Initialized {
-		panic("need to call Preload first")
-	}
-	if fi.lengths.IsWasmImport {
-		wi := (*goobj.FuncInfo)(nil).ReadWasmImport(fi.data[fi.lengths.WasmImportOff:])
-		return &wi
-	}
-	return nil
 }
 
 func (l *Loader) FuncInfo(i Sym) FuncInfo {

@@ -6,7 +6,6 @@ package wasm
 
 import (
 	"bytes"
-	"cmd/internal/goobj"
 	"cmd/internal/obj"
 	"cmd/internal/objabi"
 	"cmd/internal/sys"
@@ -136,7 +135,7 @@ var (
 
 const (
 	/* mark flags */
-	WasmImport = 1 << 0
+	IsWasmImport = 1 << 0
 )
 
 func instinit(ctxt *obj.Link) {
@@ -191,9 +190,14 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 
 	wi := s.Func.WasmImport
 	if wi != nil {
+		if s.Func.WasmImportSym == nil {
+			auxSym := &obj.LSym{}
+			wi.WriteToSymContent(ctxt, auxSym)
+			s.Func.WasmImportSym = auxSym
+		}
 		/*
-					   Functions generated from //go:wasmimport have garbage in their bodies
-			           for some reason. Discard the garbage, expect for the first instruction (TEXT).
+		  Functions generated from //go:wasmimport have garbage in their bodies
+		  for some reason. Discard the garbage, expect for the first instruction (TEXT).
 		*/
 		p := s.Func.Text
 		p.Link = nil
@@ -205,7 +209,7 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 		if wi.Module == "go" {
 			p = appendp(p, AGet, regAddr(REG_SP))
 			p = appendp(p, ACall, to)
-			p.Mark = WasmImport
+			p.Mark = IsWasmImport
 		} else {
 			if len(wi.Results) > 1 {
 				panic("invalid results type") // impossible until multi-value proposal has landed
@@ -217,15 +221,15 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 				p = appendp(p, AGet, regAddr(REG_SP))
 				f.Offset += 8
 				switch f.Type {
-				case goobj.WasmI32:
+				case obj.WasmI32:
 					p = appendp(p, AI32Load, constAddr(f.Offset))
-				case goobj.WasmI64:
+				case obj.WasmI64:
 					p = appendp(p, AI64Load, constAddr(f.Offset))
-				case goobj.WasmF32:
+				case obj.WasmF32:
 					p = appendp(p, AF32Load, constAddr(f.Offset))
-				case goobj.WasmF64:
+				case obj.WasmF64:
 					p = appendp(p, AF64Load, constAddr(f.Offset))
-				case goobj.WasmPtr:
+				case obj.WasmPtr:
 					p = appendp(p, AI64Load, constAddr(f.Offset))
 					p = appendp(p, AI32WrapI64)
 				default:
@@ -233,20 +237,20 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 				}
 			}
 			p = appendp(p, ACall, to)
-			p.Mark = WasmImport
+			p.Mark = IsWasmImport
 			if len(wi.Results) == 1 {
 				f := wi.Results[0]
 				f.Offset += 8
 				switch f.Type {
-				case goobj.WasmI32:
+				case obj.WasmI32:
 					p = appendp(p, AI32Store, constAddr(f.Offset))
-				case goobj.WasmI64:
+				case obj.WasmI64:
 					p = appendp(p, AI64Store, constAddr(f.Offset))
-				case goobj.WasmF32:
+				case obj.WasmF32:
 					p = appendp(p, AF32Store, constAddr(f.Offset))
-				case goobj.WasmF64:
+				case obj.WasmF64:
 					p = appendp(p, AF64Store, constAddr(f.Offset))
-				case goobj.WasmPtr:
+				case obj.WasmPtr:
 					p = appendp(p, AI64ExtendI32U)
 					p = appendp(p, AI64Store, constAddr(f.Offset))
 				default:
@@ -1070,7 +1074,7 @@ func assemble(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 				r := obj.Addrel(s)
 				r.Off = int32(w.Len())
 				r.Type = objabi.R_CALL
-				if p.Mark&WasmImport != 0 {
+				if p.Mark&IsWasmImport != 0 {
 					r.Type = objabi.R_WASMIMPORT
 				}
 				r.Sym = p.To.Sym

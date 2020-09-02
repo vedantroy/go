@@ -6,11 +6,12 @@ package wasm
 
 import (
 	"bytes"
-	"cmd/internal/goobj"
+	"cmd/internal/obj"
 	"cmd/internal/objabi"
 	"cmd/link/internal/ld"
 	"cmd/link/internal/loader"
 	"cmd/link/internal/sym"
+	"encoding/binary"
 	"io"
 	"regexp"
 )
@@ -53,6 +54,47 @@ type wasmFunc struct {
 type wasmFuncType struct {
 	Params  []byte
 	Results []byte
+}
+
+func readWasmImport(b []byte) obj.WasmImport {
+	readUint32 := func() uint32 {
+		x := binary.LittleEndian.Uint32(b)
+		b = b[4:]
+		return x
+	}
+	readInt64 := func() int64 {
+		val, bytesRead := binary.Varint(b)
+		if bytesRead <= 0 {
+			panic("could not read int64")
+		}
+		b = b[bytesRead:]
+		return val
+	}
+	readByte := func() byte {
+		byte_ := b[0]
+		b = b[1:]
+		return byte_
+	}
+	readString := func() string {
+		len_ := readUint32()
+		buf := b[:len_]
+		b = b[len_:]
+		return string(buf)
+	}
+	wi := obj.WasmImport{}
+	wi.Module = readString()
+	wi.Name = readString()
+	wi.Params = make([]obj.WasmField, readUint32())
+	for i := range wi.Params {
+		wi.Params[i].Type = obj.WasmFieldType(readByte())
+		wi.Params[i].Offset = readInt64()
+	}
+	wi.Results = make([]obj.WasmField, readUint32())
+	for i := range wi.Results {
+		wi.Results[i].Type = obj.WasmFieldType(readByte())
+		wi.Results[i].Offset = readInt64()
+	}
+	return wi
 }
 
 var wasmFuncTypes = map[string]*wasmFuncType{
@@ -135,11 +177,22 @@ func asmb2(ctxt *ld.Link, ldr *loader.Loader) {
 	var hostImports []*wasmFunc
 
 	for _, fn := range ctxt.Textp {
-		fi := ldr.FuncInfo(fn)
-		if fi.Valid() {
-			fi.Preload()
-			wi := fi.WasmImport()
-			if wi != nil {
+		relocs := ldr.Relocs(fn)
+		// I can make the reader not crash by only calling
+		// ldr.GetFuncWasmImportSym when I know `fn` has a R_WASMIMPORT
+		// relocation. If and only if `fn` has a R_WASMIMPORT relocation then it's guaranteed
+		// to have a WasmImport sym.
+		// If I don't use this workaround, the reader will crash on line
+		// on line 795 of $GOROOT/src/cmd/internal/goobj/objfile.go
+		// (The first line in AuxOff) with a invalid memory reference or nil pointer dereference error
+		for ri := 0; ri < relocs.Count(); ri++ {
+			r := relocs.At(ri)
+			if r.Type() == objabi.R_WASMIMPORT {
+				wasmImportSym := ldr.GetFuncWasmImportSym(fn)
+				// However, the work around mentioned above doesn't help because
+				// ldr.Data ends up returning an empty byte slice, causing readWasmImport
+				// to crash.
+				wi := readWasmImport(ldr.Data(wasmImportSym))
 				hostImportMap[fn] = int64(len(hostImports))
 				hostImports = append(hostImports, &wasmFunc{
 					Module: wi.Module,
@@ -604,17 +657,17 @@ func writeSleb128(w io.ByteWriter, v int64) {
 	}
 }
 
-func fieldsToTypes(fields []goobj.WasmField) []byte {
+func fieldsToTypes(fields []obj.WasmField) []byte {
 	b := make([]byte, len(fields))
 	for i, f := range fields {
 		switch f.Type {
-		case goobj.WasmI32, goobj.WasmPtr:
+		case obj.WasmI32, obj.WasmPtr:
 			b[i] = I32
-		case goobj.WasmI64:
+		case obj.WasmI64:
 			b[i] = I64
-		case goobj.WasmF32:
+		case obj.WasmF32:
 			b[i] = F32
-		case goobj.WasmF64:
+		case obj.WasmF64:
 			b[i] = F64
 		}
 	}

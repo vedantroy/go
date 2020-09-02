@@ -15,7 +15,6 @@ import (
 
 	"cmd/compile/internal/syntax"
 	"cmd/compile/internal/types"
-	"cmd/internal/goobj"
 	"cmd/internal/obj"
 	"cmd/internal/objabi"
 	"cmd/internal/src"
@@ -1524,8 +1523,8 @@ type wasmimport struct {
 }
 
 type wasmfields struct {
-	Results []goobj.WasmField
-	Params  []goobj.WasmField
+	Results []obj.WasmField
+	Params  []obj.WasmField
 }
 
 type PragmaPos struct {

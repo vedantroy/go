@@ -33,7 +33,6 @@ package gc
 import (
 	"cmd/compile/internal/ssa"
 	"cmd/compile/internal/types"
-	"cmd/internal/goobj"
 	"cmd/internal/obj"
 	"cmd/internal/objabi"
 	"cmd/internal/src"
@@ -281,13 +280,13 @@ func (f *Func) initLSym(hasBody bool) {
 			f.lsym.Func = &obj.FuncInfo{}
 		}
 		if wi.module == "go" {
-			f.lsym.Func.WasmImport = &goobj.WasmImport{
+			f.lsym.Func.WasmImport = &obj.WasmImport{
 				Module: wi.module,
 				Name:   wi.name,
-				Params: []goobj.WasmField{{Type: goobj.WasmI32}},
+				Params: []obj.WasmField{{Type: obj.WasmI32}},
 			}
 		} else {
-			f.lsym.Func.WasmImport = &goobj.WasmImport{
+			f.lsym.Func.WasmImport = &obj.WasmImport{
 				Module:  wi.module,
 				Name:    wi.name,
 				Params:  f.wasmfields.Params,
